@@ -1,0 +1,39 @@
+{
+  "name": "searchology",
+  "version": "1.1.1",
+  "description": "Official SDK for the Searchology API — turn natural language search queries into structured JSON",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch"
+  },
+  "keywords": [
+    "search",
+    "nlp",
+    "natural-language",
+    "query-parser",
+    "structured-search",
+    "ai-search",
+    "llm",
+    "searchology"
+  ],
+  "author": "Abdullah Shahid",
+  "license": "MIT",
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
