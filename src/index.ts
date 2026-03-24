@@ -3,94 +3,41 @@ const DEFAULT_BASE_URL = 'https://searchology.duckdns.org'
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface SearchologyConfig {
-  apiKey?:  string   // optional at init — user may call createApiKey() first
+  apiKey?:  string
   baseUrl?: string
 }
 
 export interface CreateKeyResult {
   message:    string
-  id:         string
-  key:        string   // sk_live_xxx — save this, shown only once
+  key:        string   // sgy_xxx — save this
   name:       string
-  created_at: string
+  expires_in: string   // "30 days"
+}
+
+// key status response — clean user-facing fields only
+export interface KeyStatusResult {
+  status:     'active'
+  name:       string
+  expires_in: string | null  // "18 days" or null
+  requests:   number
+}
+
+// key refresh response — minimal confirmation
+export interface KeyRefreshResult {
+  message:    string
+  expires_in: string  // "30 days"
+}
+
+export interface ExtractedField {
+  value:      unknown
+  confidence: number
 }
 
 export interface ExtractResult {
   query:      string
-  result:     SearchAttributes
+  result:     Record<string, ExtractedField>
   keys_found: number
   latency_ms: number
-}
-
-export interface SearchAttributes {
-  // Product Identity
-  product_type?:     string
-  product_name?:     string
-  brand?:            string
-  model?:            string
-  category?:         string
-  subcategory?:      string
-  // Physical
-  color?:            string
-  color_secondary?:  string
-  size?:             string
-  size_type?:        string
-  material?:         string
-  pattern?:          string
-  shape?:            string
-  weight?:           string
-  dimensions?:       string
-  // Target Person
-  gender?:           'male' | 'female' | 'unisex'
-  age?:              number
-  age_group?:        string
-  relationship?:     string
-  profession?:       string
-  // Occasion & Usage
-  occasion?:         string
-  season?:           string
-  weather?:          string
-  usage?:            string
-  activity?:         string
-  // Pricing
-  price_max?:        number
-  price_min?:        number
-  currency?:         string
-  budget_label?:     'budget' | 'mid-range' | 'premium' | 'luxury'
-  discount?:         boolean
-  // Quality & Condition
-  condition?:        'new' | 'used' | 'refurbished' | 'open-box'
-  quality_tier?:     string
-  rating_min?:       number
-  certification?:    string
-  // Delivery
-  delivery_speed?:   'same-day' | 'next-day' | 'express' | 'standard'
-  location?:         string
-  availability?:     string
-  seller_type?:      string
-  // Electronics
-  storage?:          string
-  ram?:              string
-  battery?:          string
-  display_size?:     string
-  connectivity?:     string
-  operating_system?: string
-  processor?:        string
-  // Style
-  style?:            string
-  fit?:              string
-  neckline?:         string
-  sleeve?:           string
-  aesthetic?:        string
-  // Special
-  eco_friendly?:     boolean
-  handmade?:         boolean
-  customizable?:     boolean
-  gift_wrap?:        boolean
-  quantity?:         number | string
-  language?:         string
-  // allow any extra keys from custom schemas
-  [key: string]:     unknown
 }
 
 export interface SearchologyError {
@@ -111,84 +58,116 @@ export class Searchology {
 
   /**
    * Create a new API key. No authentication needed.
-   * Call this once, save the returned key, then use it for extract().
+   * Call this once, save the returned key, use it for all other methods.
    *
-   * @param name — a label for this key (your app name, your name, etc.)
-   * @returns CreateKeyResult with your key — save it, shown only once
+   * @param name — a label for this key (your app name, client name, etc.)
+   * @returns { key, name, expires_in } — save the key, shown only once
    *
    * @example
    * const client = new Searchology()
    * const { key } = await client.createApiKey('my-app')
-   * // save key to your .env or config
-   * // key = 'sk_live_xxxxxxxxxxxxxxxx'
+   * // key = 'sgy_xxxxxxxxxxxxxxxx' — save this to your .env
    */
   async createApiKey(name: string): Promise<CreateKeyResult> {
     if (!name || typeof name !== 'string' || name.trim() === '') {
       throw new Error('Searchology: name is required')
     }
-
     if (name.trim().length > 64) {
       throw new Error('Searchology: name must be 64 characters or less')
     }
 
-    const response = await fetch(`${this.baseUrl}/register`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ name: name.trim() })
-    })
+    const result = await this.request<CreateKeyResult>('POST', '/register', { name: name.trim() })
 
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({})) as SearchologyError
-      throw new SearchologyAPIError(
-        err.message ?? `Request failed with status ${response.status}`,
-        response.status,
-        err.error   ?? 'unknown_error'
-      )
-    }
-
-    const result = await response.json() as CreateKeyResult
-
-    // auto-set the key on this instance so extract() works immediately
+    // auto-set key on instance so other methods work immediately after
     this.apiKey = result.key
 
     return result
   }
 
   /**
-   * Extract structured attributes from a natural language query.
-   * Requires an API key — either passed in constructor or via createApiKey().
+   * Check the status of your API key.
+   * Returns active status, days remaining, and request count.
    *
-   * @param query — plain English search query (max 500 chars)
-   * @returns structured JSON with extracted attributes
+   * @returns { status, name, expires_in, requests }
    *
    * @example
-   * const client = new Searchology({ apiKey: 'sk_live_xxxxxxxx' })
-   * const { result } = await client.extract('black t-shirt under $15')
-   * // { color: 'black', product_type: 't-shirt', price_max: 15 }
+   * const client = new Searchology({ apiKey: 'sgy_xxx' })
+   * const status = await client.getKeyStatus()
+   * console.log(status.expires_in)  // "18 days"
+   * console.log(status.requests)    // 142
+   */
+  async getKeyStatus(): Promise<KeyStatusResult> {
+    this.requireApiKey()
+    return this.request<KeyStatusResult>('GET', '/key/status')
+  }
+
+  /**
+   * Refresh your API key expiry — resets to 30 days from today.
+   * Same key string, same history, just extended expiry.
+   * Call this before your key expires to keep access uninterrupted.
+   *
+   * @returns { message, expires_in }
+   *
+   * @example
+   * const client = new Searchology({ apiKey: 'sgy_xxx' })
+   * const result = await client.refreshKey()
+   * console.log(result.expires_in)  // "30 days"
+   * console.log(result.message)     // "Key expiry refreshed successfully"
+   */
+  async refreshKey(): Promise<KeyRefreshResult> {
+    this.requireApiKey()
+    return this.request<KeyRefreshResult>('POST', '/key/refresh')
+  }
+
+  /**
+   * Extract structured attributes from a natural language query.
+   *
+   * @param query — plain English search query (max 500 chars)
+   * @returns { query, result, keys_found, latency_ms }
+   *
+   * @example
+   * const client = new Searchology({ apiKey: 'sgy_xxx' })
+   * const data = await client.extract('black t-shirt under $15')
+   * data.result.color.value      // 'black'
+   * data.result.color.confidence // 1.0
    */
   async extract(query: string): Promise<ExtractResult> {
+    this.requireApiKey()
+
+    if (!query || typeof query !== 'string') {
+      throw new Error('Searchology: query must be a non-empty string')
+    }
+    if (query.length > 500) {
+      throw new Error(`Searchology: query must be 500 characters or less (got ${query.length})`)
+    }
+
+    return this.request<ExtractResult>('POST', '/extract', { query })
+  }
+
+  // ── private ──────────────────────────────────────────────────────────────
+
+  private requireApiKey(): void {
     if (!this.apiKey) {
       throw new Error(
         'Searchology: no API key set. ' +
         'Pass apiKey in constructor or call createApiKey() first.'
       )
     }
+  }
 
-    if (!query || typeof query !== 'string') {
-      throw new Error('Searchology: query must be a non-empty string')
+  private async request<T>(method: string, path: string, body?: object): Promise<T> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
     }
 
-    if (query.length > 500) {
-      throw new Error(`Searchology: query must be 500 characters or less (got ${query.length})`)
+    if (this.apiKey) {
+      headers['Authorization'] = `Bearer ${this.apiKey}`
     }
 
-    const response = await fetch(`${this.baseUrl}/extract`, {
-      method:  'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
-      },
-      body: JSON.stringify({ query })
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined
     })
 
     if (!response.ok) {
@@ -200,7 +179,7 @@ export class Searchology {
       )
     }
 
-    return response.json() as Promise<ExtractResult>
+    return response.json() as Promise<T>
   }
 }
 
@@ -217,7 +196,5 @@ export class SearchologyAPIError extends Error {
     this.errorCode = errorCode
   }
 }
-
-// ── Default export ─────────────────────────────────────────────────────────
 
 export default Searchology
