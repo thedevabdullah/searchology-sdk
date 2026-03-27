@@ -1,14 +1,14 @@
 {
   "name": "searchology",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Official SDK for the Searchology API — turn natural language search queries into structured JSON",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types":   "./dist/index.d.ts",
-      "import":  "./dist/index.mjs",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
       "require": "./dist/index.js",
       "default": "./dist/index.js"
     }
@@ -20,9 +20,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "build":          "tsup src/index.ts --format cjs,esm --dts --clean",
-    "dev":            "tsup src/index.ts --format cjs,esm --dts --watch",
-    "typecheck":      "tsc --noEmit",
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
   "engines": {
@@ -48,14 +48,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url":  "https://github.com/abdullahshahid/searchology-sdk"
+    "url": "https://github.com/abdullahshahid/searchology-sdk"
   },
   "homepage": "https://www.npmjs.com/package/searchology",
   "bugs": {
     "url": "https://github.com/abdullahshahid/searchology-sdk/issues"
   },
   "devDependencies": {
-    "tsup":       "^8.0.0",
+    "tsup": "^8.0.0",
     "typescript": "^5.0.0"
   }
 }
