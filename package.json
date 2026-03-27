@@ -7,18 +7,26 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
+      "types":   "./dist/index.d.ts",
+      "import":  "./dist/index.mjs",
       "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "default": "./dist/index.js"
     }
   },
+  "sideEffects": false,
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch"
+    "build":          "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev":            "tsup src/index.ts --format cjs,esm --dts --watch",
+    "typecheck":      "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "keywords": [
     "search",
@@ -28,12 +36,26 @@
     "structured-search",
     "ai-search",
     "llm",
-    "searchology"
+    "searchology",
+    "ecommerce",
+    "product-search",
+    "intent-extraction",
+    "search-filters",
+    "structured-output",
+    "semantic-search"
   ],
   "author": "Abdullah Shahid",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url":  "https://github.com/abdullahshahid/searchology-sdk"
+  },
+  "homepage": "https://www.npmjs.com/package/searchology",
+  "bugs": {
+    "url": "https://github.com/abdullahshahid/searchology-sdk/issues"
+  },
   "devDependencies": {
-    "tsup": "^8.0.0",
+    "tsup":       "^8.0.0",
     "typescript": "^5.0.0"
   }
 }
