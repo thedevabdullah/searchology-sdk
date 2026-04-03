@@ -1,6 +1,13 @@
 interface SearchologyConfig {
+    /** Your API key — get one via createApiKey() or from your dashboard. */
     apiKey?: string;
+    /** Override the API base URL. Defaults to the Searchology production server. */
     baseUrl?: string;
+    /**
+     * Request timeout in milliseconds. Defaults to 30 000 (30 seconds).
+     * Set to 0 to disable the timeout entirely.
+     */
+    timeout?: number;
 }
 interface CreateKeyResult {
     message: string;
@@ -52,17 +59,30 @@ interface SearchologyError {
 declare class Searchology {
     private apiKey;
     private baseUrl;
+    private timeout;
     constructor(config?: SearchologyConfig);
     /**
      * Create a new API key. No authentication needed.
-     * Call this once, save the returned key, use it for all other methods.
+     * Call this once, save the returned key, then pass it to the constructor.
+     *
+     * @param name — a label for this key (your app name, your name, etc.) — max 64 chars
+     * @returns `CreateKeyResult` with your key — store it immediately, it is shown only once
      *
      * @example
      * const client = new Searchology()
      * const { key } = await client.createApiKey('my-app')
-     * // save key to .env as SEARCHOLOGY_API_KEY
+     * // store key in your .env as SEARCHOLOGY_API_KEY
      */
     createApiKey(name: string): Promise<CreateKeyResult>;
+    /**
+     * Set or replace the API key on an existing client instance.
+     * Useful when you retrieve your stored key after constructing the client.
+     *
+     * @example
+     * const client = new Searchology()
+     * client.setApiKey(process.env.SEARCHOLOGY_API_KEY!)
+     */
+    setApiKey(key: string): void;
     /**
      * Get the full built-in schema — all extractable keys with descriptions.
      * No authentication needed.
@@ -70,17 +90,17 @@ declare class Searchology {
      * @example
      * const client = new Searchology()
      * const schema = await client.getSchema()
-     * console.log(schema.total_keys) // 50+
+     * console.log(schema.total_keys) // 70
      */
     getSchema(): Promise<SchemaResult>;
     /**
-     * Check your API key status — expiry, request count, custom schema.
+     * Check your API key status — expiry, request count, and whether a custom schema is saved.
      *
      * @example
      * const status = await client.getKeyStatus()
      * console.log(status.expires_in)    // "18 days"
      * console.log(status.requests)      // 142
-     * console.log(status.custom_schema) // true/false
+     * console.log(status.custom_schema) // true / false
      */
     getKeyStatus(): Promise<KeyStatusResult>;
     /**
@@ -93,30 +113,33 @@ declare class Searchology {
     refreshKey(): Promise<KeyRefreshResult>;
     /**
      * Save a custom schema against your API key.
-     * Keys can be built-in schema keys or completely custom ones.
-     * Max 50 keys.
+     * Once saved, pass `{ useCustomSchema: true }` to `extract()` to use it.
+     * Max 50 keys. Each value must be a plain string description.
      *
      * @example
      * await client.saveSchema({
      *   color:     'product color e.g. red, blue, black',
-     *   price_max: 'maximum price as a number',
-     *   brand:     'brand name e.g. nike, apple'
+     *   price_max: 'maximum price as a plain number',
+     *   brand:     'brand name e.g. nike, apple',
      * })
      */
     saveSchema(schema: Record<string, string>): Promise<SaveSchemaResult>;
     /**
-     * Get your saved custom schema.
+     * Get your currently saved custom schema.
+     * Returns `{ custom_schema: null }` when no custom schema has been saved.
      *
      * @example
      * const result = await client.getCustomSchema()
-     * console.log(result.schema) // { color: '...', price_max: '...' }
+     * if (result.custom_schema !== null) {
+     *   console.log(result.schema) // { color: '...', price_max: '...' }
+     * }
      */
     getCustomSchema(): Promise<CustomSchemaResult | {
         custom_schema: null;
         message: string;
     }>;
     /**
-     * Delete your custom schema — falls back to built-in schema.
+     * Remove your custom schema — extraction reverts to the full built-in schema.
      *
      * @example
      * await client.deleteCustomSchema()
@@ -125,21 +148,24 @@ declare class Searchology {
         message: string;
     }>;
     /**
-     * Extract structured attributes from a natural language query.
+     * Extract structured attributes from a plain English search query.
      *
-     * @param query   — plain English search query (max 500 chars)
-     * @param options — { useCustomSchema: true } to use your saved schema
+     * @param query   — natural language search query, max 500 characters
+     * @param options — `{ useCustomSchema: true }` to extract against your saved schema
      *
      * @example
-     * // use built-in schema (default)
+     * // built-in schema (default)
      * const data = await client.extract('black t-shirt under $15')
+     * console.log(data.result.color?.value)      // 'black'
+     * console.log(data.result.price_max?.value)  // 15
      *
-     * // use your custom schema
+     * // custom schema
      * const data = await client.extract('black t-shirt under $15', { useCustomSchema: true })
      *
-     * // check for suggestions when nothing found
+     * // handle zero-result queries
      * if (data.keys_found === 0 && data.suggestions) {
-     *   console.log('Try:', data.suggestions)
+     *   console.log(data.hint)
+     *   console.log(data.suggestions)
      * }
      */
     extract(query: string, options?: {
@@ -149,8 +175,8 @@ declare class Searchology {
     private request;
 }
 declare class SearchologyAPIError extends Error {
-    status: number;
-    errorCode: string;
+    readonly status: number;
+    readonly errorCode: string;
     constructor(message: string, status: number, errorCode: string);
 }
 

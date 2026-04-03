@@ -1,20 +1,13 @@
 const DEFAULT_BASE_URL   = 'https://searchology.duckdns.org'
-const DEFAULT_TIMEOUT_MS = 30_000  // 30 seconds — overridable per-instance
+const DEFAULT_TIMEOUT_MS = 30_000
 
-// ── Internal type ─────────────────────────────────────────────────────────────
 type HttpMethod = 'GET' | 'POST' | 'DELETE' | 'PATCH' | 'PUT'
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
 export interface SearchologyConfig {
-  /** Your API key — get one via createApiKey() or from your dashboard. */
   apiKey?:  string
-  /** Override the API base URL. Defaults to the Searchology production server. */
   baseUrl?: string
-  /**
-   * Request timeout in milliseconds. Defaults to 30 000 (30 seconds).
-   * Set to 0 to disable the timeout entirely.
-   */
   timeout?: number
 }
 
@@ -26,11 +19,12 @@ export interface CreateKeyResult {
 }
 
 export interface KeyStatusResult {
-  status:        'active'
-  name:          string
-  expires_in:    string | null
-  requests:      number
-  custom_schema: boolean
+  status:         'active'
+  name:           string
+  expires_in:     string | null
+  requests:       number
+  custom_schema:  boolean
+  rate_limit_rpm: number
 }
 
 export interface KeyRefreshResult {
@@ -65,8 +59,31 @@ export interface ExtractResult {
   keys_found:   number
   latency_ms:   number
   schema_used:  'builtin' | 'custom'
+  cached:       boolean
   suggestions?: string[]
   hint?:        string
+}
+
+// ── Key usage types ───────────────────────────────────────────────────────────
+
+export interface KeyUsageDayResult {
+  day:            string  // "YYYY-MM-DD"
+  requests:       number
+  successful:     number
+  errors:         number
+  avg_latency_ms: number | null
+}
+
+export interface KeyUsageResult {
+  key_id: string
+  name:   string
+  daily:  KeyUsageDayResult[]
+  totals: {
+    requests_7d:    number
+    successful_7d:  number
+    errors_7d:      number
+    avg_latency_7d: number | null
+  }
 }
 
 export interface SearchologyError {
@@ -82,7 +99,6 @@ export class Searchology {
   private timeout: number
 
   constructor(config: SearchologyConfig = {}) {
-    // Validate baseUrl if provided — catch obvious mistakes early
     if (config.baseUrl !== undefined) {
       const url = config.baseUrl.trim()
       try { new URL(url) } catch {
@@ -102,19 +118,18 @@ export class Searchology {
 
   /**
    * Create a new API key. No authentication needed.
-   * Call this once, save the returned key, then pass it to the constructor.
+   * Limited to 3 keys per IP per hour to prevent abuse.
    *
-   * @param name — a label for this key (your app name, your name, etc.) — max 64 chars
-   * @returns `CreateKeyResult` with your key — store it immediately, it is shown only once
+   * @param name — a label for this key (your app name, etc.) — max 64 chars
+   * @returns `CreateKeyResult` with your key — store it immediately
    *
    * @example
    * const client = new Searchology()
    * const { key } = await client.createApiKey('my-app')
-   * // store key in your .env as SEARCHOLOGY_API_KEY
    */
   async createApiKey(name: string): Promise<CreateKeyResult> {
     const trimmed = name?.trim()
-    if (!trimmed)         throw new Error('Searchology: name is required')
+    if (!trimmed)            throw new Error('Searchology: name is required')
     if (trimmed.length > 64) throw new Error('Searchology: name must be 64 characters or less')
 
     const result = await this.request<CreateKeyResult>('POST', '/register', { name: trimmed })
@@ -124,7 +139,6 @@ export class Searchology {
 
   /**
    * Set or replace the API key on an existing client instance.
-   * Useful when you retrieve your stored key after constructing the client.
    *
    * @example
    * const client = new Searchology()
@@ -137,11 +151,9 @@ export class Searchology {
   }
 
   /**
-   * Get the full built-in schema — all extractable keys with descriptions.
-   * No authentication needed.
+   * Get the full built-in schema. No authentication needed.
    *
    * @example
-   * const client = new Searchology()
    * const schema = await client.getSchema()
    * console.log(schema.total_keys) // 70
    */
@@ -150,17 +162,34 @@ export class Searchology {
   }
 
   /**
-   * Check your API key status — expiry, request count, and whether a custom schema is saved.
+   * Check your API key status — expiry, request count, rate limit, custom schema.
    *
    * @example
    * const status = await client.getKeyStatus()
-   * console.log(status.expires_in)    // "18 days"
-   * console.log(status.requests)      // 142
-   * console.log(status.custom_schema) // true / false
+   * console.log(status.expires_in)     // "18 days"
+   * console.log(status.requests)       // 142
+   * console.log(status.rate_limit_rpm) // 60
    */
   async getKeyStatus(): Promise<KeyStatusResult> {
     this.requireApiKey()
     return this.request<KeyStatusResult>('GET', '/key/status')
+  }
+
+  /**
+   * Get your per-day usage breakdown for the last 7 days.
+   * Includes request counts, success/error split, and average latency per day.
+   *
+   * @example
+   * const usage = await client.getKeyUsage()
+   * console.log(usage.totals.requests_7d)   // 84
+   * console.log(usage.totals.avg_latency_7d) // 412
+   * usage.daily.forEach(d => {
+   *   console.log(d.day, d.requests, d.errors)
+   * })
+   */
+  async getKeyUsage(): Promise<KeyUsageResult> {
+    this.requireApiKey()
+    return this.request<KeyUsageResult>('GET', '/key/usage')
   }
 
   /**
@@ -179,7 +208,6 @@ export class Searchology {
 
   /**
    * Save a custom schema against your API key.
-   * Once saved, pass `{ useCustomSchema: true }` to `extract()` to use it.
    * Max 50 keys. Each value must be a plain string description.
    *
    * @example
@@ -199,12 +227,11 @@ export class Searchology {
 
   /**
    * Get your currently saved custom schema.
-   * Returns `{ custom_schema: null }` when no custom schema has been saved.
    *
    * @example
    * const result = await client.getCustomSchema()
    * if (result.custom_schema !== null) {
-   *   console.log(result.schema) // { color: '...', price_max: '...' }
+   *   console.log(result.schema)
    * }
    */
   async getCustomSchema(): Promise<CustomSchemaResult | { custom_schema: null; message: string }> {
@@ -229,18 +256,14 @@ export class Searchology {
    * Extract structured attributes from a plain English search query.
    *
    * @param query   — natural language search query, max 500 characters
-   * @param options — `{ useCustomSchema: true }` to extract against your saved schema
+   * @param options — `{ useCustomSchema: true }` to use your saved custom schema
    *
    * @example
-   * // built-in schema (default)
    * const data = await client.extract('black t-shirt under $15')
-   * console.log(data.result.color?.value)      // 'black'
-   * console.log(data.result.price_max?.value)  // 15
+   * console.log(data.result.color?.value)     // 'black'
+   * console.log(data.result.price_max?.value) // 15
+   * console.log(data.cached)                  // true/false
    *
-   * // custom schema
-   * const data = await client.extract('black t-shirt under $15', { useCustomSchema: true })
-   *
-   * // handle zero-result queries
    * if (data.keys_found === 0 && data.suggestions) {
    *   console.log(data.hint)
    *   console.log(data.suggestions)
@@ -274,9 +297,8 @@ export class Searchology {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`
 
-    // Attach a timeout via AbortController — keeps fetch from hanging indefinitely
-    const controller  = new AbortController()
-    const timer       = this.timeout > 0
+    const controller = new AbortController()
+    const timer      = this.timeout > 0
       ? setTimeout(() => controller.abort(), this.timeout)
       : null
 
@@ -300,10 +322,7 @@ export class Searchology {
       return response.json() as Promise<T>
 
     } catch (err) {
-      // Rethrow SearchologyAPIError as-is — do not double-wrap
       if (err instanceof SearchologyAPIError) throw err
-
-      // Translate AbortError into a clean timeout error
       if (err instanceof Error && err.name === 'AbortError') {
         throw new SearchologyAPIError(
           `Request timed out after ${this.timeout}ms`,
@@ -311,7 +330,6 @@ export class Searchology {
           'request_timeout'
         )
       }
-
       throw err
     } finally {
       if (timer !== null) clearTimeout(timer)
@@ -330,8 +348,6 @@ export class SearchologyAPIError extends Error {
     this.name      = 'SearchologyAPIError'
     this.status    = status
     this.errorCode = errorCode
-    // Fix the prototype chain so that instanceof checks work correctly
-    // when TypeScript compiles to a target below ES6 or in some bundler contexts.
     Object.setPrototypeOf(this, new.target.prototype)
   }
 }

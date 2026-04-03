@@ -1051,5 +1051,3 @@ When you exceed 60 requests per minute, the API returns HTTP `429` with `retry_a
 MIT — see [LICENSE](LICENSE) for details.
 
 ---
-
-<p align="center">Built with TypeScript · Powered by Groq · LLaMA 3.1</p>
